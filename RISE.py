@@ -6,11 +6,12 @@ from tqdm import tqdm
 
 
 class RISE(nn.Module):
-    def __init__(self, model, input_size, gpu_batch=100):
+    def __init__(self, model, input_size, gpu_batch=100, p1=0.1):
         super(RISE, self).__init__()
         self.model = model
         self.input_size = input_size
         self.gpu_batch = gpu_batch
+        self.p1 = p1
 
     def generate_masks(self, N, s, p1, savepath='masks.npy'):
         cell_size = np.ceil(np.array(self.input_size) / s)

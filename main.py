@@ -10,6 +10,7 @@ import torch.utils.data
 import torchvision.transforms as transforms
 import torchvision.datasets as datasets
 import torchvision.models as models
+from torchvision.utils import save_image
 
 from utils import *
 from RISE import RISE
@@ -39,7 +40,7 @@ def example(img, top_k=3, save_path='output.png'):
 
 def explain_all(data_loader, explainer):
     # Get all predicted labels first
-    target = np.empty(len(data_loader), np.int)
+    target = np.empty(len(data_loader), dtype=int)
     for i, (img, _) in enumerate(tqdm(data_loader, total=len(data_loader), desc='Predicting labels')):
         p, c = torch.max(model(img.cuda()), dim=1)
         target[i] = c[0]
@@ -56,9 +57,9 @@ def apply_mask(image, mask):
 
 def random_masking(image, mask_size=50):
     mask = torch.ones_like(image)
-    x = np.random.randint(0, image.shape[2] - mask_size)
-    y = np.random.randint(0, image.shape[3] - mask_size)
-    mask[:, :, x:x+mask_size, y:y+mask_size] = 0
+    x = np.random.randint(0, image.shape[1] - mask_size)
+    y = np.random.randint(0, image.shape[2] - mask_size)
+    mask[:, x:x+mask_size, y:y+mask_size] = 0
     return image * mask
 
 cudnn.benchmark = True
@@ -116,13 +117,25 @@ else:
 
 
 explanations = explain_all(data_loader, explainer)
-explanations.tofile('exp_{:05}-{:05}.npy'.format(args.range[0], args.range[-1]))
+np.save('exp_{:05}-{:05}.npy'.format(args.range[0], args.range[-1]), explanations)
+#explanations.tofile('exp_{:05}-{:05}.npy'.format(args.range[0], args.range[-1]))
+
+explanations_filename = 'exp_{:05}-{:05}.npy'.format(args.range[0], args.range[-1])
+explanations = np.load('/home/sophia/nn-uncertainty/exp_00095-00104.npy', allow_pickle=True)
 
 for i, (img, _) in enumerate(data_loader):
     # 설명 가능성 마스크 적용
+    save_image(img[0], 'original_img_{:04d}.png'.format(i))
+    explanation_tensor = torch.from_numpy(explanations[i]).unsqueeze(0)
+    save_image(explanation_tensor, 'explanations_{:04d}.png'.format(i))
+
     masked_image = apply_mask(img[0], explanations[i])
+    save_image(masked_image, 'masked_img_{:04d}.png'.format(i))
+
     randomly_masked_image = random_masking(masked_image)
-    output = model(randomly_masked_image)
+    save_image(randomly_masked_image, 'randomly_masked_img_{:04d}.png'.format(i))
+
+    output = model(randomly_masked_image.cuda())
 
     p, c = torch.max(model(img.cuda()), dim=1)
     p, c = p[0].item(), c[0].item()
