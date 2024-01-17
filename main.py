@@ -55,12 +55,81 @@ def explain_all(data_loader, explainer):
 def apply_mask(image, mask):
     return image * mask
 
+def invert_masking(image, explanation):
+    """
+    Apply an inverted mask to the image based on explanation scores.
+    
+    Args:
+    - image: torch.Tensor, the image tensor to mask.
+    - explanation: numpy.ndarray, the explanation scores for each pixel.
+    """
+    # Ensure the explanation is a tensor and normalize it
+    explanation = torch.from_numpy(explanation).to(image.device)
+    explanation_normalized = explanation / explanation.max()
+    
+    # Invert the explanation scores
+    inverted_explanation = 1 - explanation_normalized
+    
+    # Apply the inverted explanation as a mask
+    masked_image = image * inverted_explanation
+
+    return masked_image
+
+def explainability_masking(image, explanation, mask_size=50, p1=0.5):
+    """
+    Apply a random fractional mask to the image based on explanation.
+    Areas with higher explanation scores are more likely to be masked.
+    
+    Args:
+    - image: torch.Tensor, the image tensor to mask.
+    - explanation: numpy.ndarray, the explanation scores for each pixel.
+    - mask_size: int, the size of the square mask.
+    - p1: float, the base probability of masking a given pixel; 
+      actual masking probability is p1 adjusted by the explanation score.
+    """
+    # Normalize explanation scores to range [0, 1]
+    normalized_explanation = explanation / explanation.max()
+    
+    # Create a random mask with values between 0 and 1, adjusted by explanation scores
+    random_mask = torch.rand_like(image) * torch.from_numpy(normalized_explanation).float()
+    mask = random_mask > p1  # Apply base probability to decide if a pixel should be masked
+    
+    # Apply the mask to the image
+    masked_image = image.clone().float()
+    masked_image[mask] = 0  # Mask pixels where mask is True
+
+    return masked_image
+
 def random_masking(image, mask_size=50):
-    mask = torch.ones_like(image)
+    mask = torch.ones_like(image).float()
     x = np.random.randint(0, image.shape[1] - mask_size)
     y = np.random.randint(0, image.shape[2] - mask_size)
     mask[:, x:x+mask_size, y:y+mask_size] = 0
-    return image * mask
+    return image.float() * mask
+
+# def random_masking(image_original, mask_size=50, p1=0.5):
+#     """
+#     Apply a random fractional mask to the image.
+#     Each pixel in the mask can be in the range [0, 1].
+#     Args:
+#     - image: torch.Tensor, the image tensor to mask.
+#     - mask_size: int, the size of the square mask.
+#     - p1: float, the probability of masking a given pixel in the mask; 
+#       this determines the sparsity of the mask.
+#     """
+#     image = image_original.clone()
+#     # Create a random mask with values between 0 and 1
+#     fractional_mask = torch.rand_like(image) > p1
+#     fractional_mask = fractional_mask.float()  # Convert boolean mask to float
+
+#     # Generate random positions for top-left corner of the mask
+#     x = np.random.randint(0, image.shape[1] - mask_size)
+#     y = np.random.randint(0, image.shape[2] - mask_size)
+
+#     # Apply the fractional mask to the selected square region
+#     image[:, x:x+mask_size, y:y+mask_size] *= fractional_mask[:, x:x+mask_size, y:y+mask_size]
+
+#     return image.float()
 
 cudnn.benchmark = True
 
@@ -116,9 +185,8 @@ else:
     print('Masks are loaded.')
 
 
-explanations = explain_all(data_loader, explainer)
-np.save('exp_{:05}-{:05}.npy'.format(args.range[0], args.range[-1]), explanations)
-#explanations.tofile('exp_{:05}-{:05}.npy'.format(args.range[0], args.range[-1]))
+#explanations = explain_all(data_loader, explainer)
+#np.save('exp_{:05}-{:05}.npy'.format(args.range[0], args.range[-1]), explanations)
 
 explanations_filename = 'exp_{:05}-{:05}.npy'.format(args.range[0], args.range[-1])
 explanations = np.load('/home/sophia/nn-uncertainty/exp_00095-00104.npy', allow_pickle=True)
@@ -129,29 +197,40 @@ for i, (img, _) in enumerate(data_loader):
     explanation_tensor = torch.from_numpy(explanations[i]).unsqueeze(0)
     save_image(explanation_tensor, 'explanations_{:04d}.png'.format(i))
 
-    masked_image = apply_mask(img[0], explanations[i])
+    #masked_image = apply_mask(img[0].float(), explanations[i])
+    #masked_image = invert_masking(img[0].float(), explanations[i])
+    masked_image = explainability_masking(img[0].float(), explanations[i])
     save_image(masked_image, 'masked_img_{:04d}.png'.format(i))
 
-    randomly_masked_image = random_masking(masked_image)
+    randomly_masked_image = random_masking(masked_image)###masked_image
     save_image(randomly_masked_image, 'randomly_masked_img_{:04d}.png'.format(i))
 
-    output = model(randomly_masked_image.cuda())
+    randomly_masked_image = randomly_masked_image.unsqueeze(0)
+    chang_prob, chang_class = torch.max(model(randomly_masked_image), dim=1)
+    chang_prob, chang_class = chang_prob[0].item(), chang_class[0].item()
 
     p, c = torch.max(model(img.cuda()), dim=1)
     p, c = p[0].item(), c[0].item()
     
     plt.figure(figsize=(10, 5))
-    plt.subplot(121)
+    plt.subplot(131)
     plt.axis('off')
     plt.title('{:.2f}% {}'.format(100*p, get_class_name(c)))
     tensor_imshow(img[0])
     
-    plt.subplot(122)
+    plt.subplot(132)
     plt.axis('off')
     plt.title(get_class_name(c))
     tensor_imshow(img[0])
     sal = explanations[i]
     plt.imshow(sal, cmap='jet', alpha=0.5)
     #plt.colorbar(fraction=0.046, pad=0.04)
+
+    plt.subplot(133)
+    plt.axis('off')
+    plt.title('{:.2f}% {}'.format(100*chang_prob, get_class_name(chang_class)))
+    tensor_imshow(randomly_masked_image[0])
+
     
-    plt.show()
+    plt.savefig('explanation_res_img_{:04d}.png'.format(i), bbox_inches='tight')
+    plt.close()
