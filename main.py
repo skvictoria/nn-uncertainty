@@ -192,45 +192,64 @@ explanations_filename = 'exp_{:05}-{:05}.npy'.format(args.range[0], args.range[-
 explanations = np.load('/home/sophia/nn-uncertainty/exp_00095-00104.npy', allow_pickle=True)
 
 for i, (img, _) in enumerate(data_loader):
-    # 설명 가능성 마스크 적용
-    save_image(img[0], 'original_img_{:04d}.png'.format(i))
+    original_prob, original_class = torch.max(model(img.cuda()), dim=1)
+    original_prob, original_class = original_prob[0].item(), original_class[0].item()
+    #save_image(img[0], 'original_img_{:04d}.png'.format(i))
     explanation_tensor = torch.from_numpy(explanations[i]).unsqueeze(0)
-    save_image(explanation_tensor, 'explanations_{:04d}.png'.format(i))
+    #save_image(explanation_tensor, 'explanations_{:04d}.png'.format(i))
 
     #masked_image = apply_mask(img[0].float(), explanations[i])
     #masked_image = invert_masking(img[0].float(), explanations[i])
-    masked_image = explainability_masking(img[0].float(), explanations[i])
-    save_image(masked_image, 'masked_img_{:04d}.png'.format(i))
 
-    randomly_masked_image = random_masking(masked_image)###masked_image
-    save_image(randomly_masked_image, 'randomly_masked_img_{:04d}.png'.format(i))
+    ##### 1. Set Threshold #####
+    thres_prob = 0.75
+    while 1:
+        masked_image = explainability_masking(img[0].float(), explanations[i], p1=thres_prob)
+        _, cl = torch.max(model(masked_image.unsqueeze(0)), dim=1)
+        if(original_class != cl[0].item()):
+            thres_prob += 0.1
+            break
+        thres_prob -= 0.05
 
-    randomly_masked_image = randomly_masked_image.unsqueeze(0)
-    chang_prob, chang_class = torch.max(model(randomly_masked_image), dim=1)
-    chang_prob, chang_class = chang_prob[0].item(), chang_class[0].item()
+    masked_image = explainability_masking(img[0].float(), explanations[i], p1=thres_prob)
+    masked_prob, masked_class = torch.max(model(masked_image.unsqueeze(0)), dim=1)
+    masked_prob, masked_class = masked_prob[0].item(), masked_class[0].item()
+    #save_image(masked_image, 'masked_img_{:04d}.png'.format(i))
 
-    p, c = torch.max(model(img.cuda()), dim=1)
-    p, c = p[0].item(), c[0].item()
-    
-    plt.figure(figsize=(10, 5))
-    plt.subplot(131)
-    plt.axis('off')
-    plt.title('{:.2f}% {}'.format(100*p, get_class_name(c)))
-    tensor_imshow(img[0])
-    
-    plt.subplot(132)
-    plt.axis('off')
-    plt.title(get_class_name(c))
-    tensor_imshow(img[0])
-    sal = explanations[i]
-    plt.imshow(sal, cmap='jet', alpha=0.5)
-    #plt.colorbar(fraction=0.046, pad=0.04)
+    for random_idx in range(50):
+        randomly_masked_image = random_masking(masked_image)###masked_image
+        #save_image(randomly_masked_image, 'randomly_masked_img_{:04d}.png'.format(i))
 
-    plt.subplot(133)
-    plt.axis('off')
-    plt.title('{:.2f}% {}'.format(100*chang_prob, get_class_name(chang_class)))
-    tensor_imshow(randomly_masked_image[0])
+        randomly_masked_image = randomly_masked_image.unsqueeze(0)
+        chang_prob, chang_class = torch.max(model(randomly_masked_image), dim=1)
+        chang_prob, chang_class = chang_prob[0].item(), chang_class[0].item()
+        
+        plt.figure(figsize=(10, 5))
+        plt.subplot(141)
+        plt.axis('off')
+        plt.title('{:.2f}% {}'.format(100*original_prob, get_class_name(original_class)))
+        tensor_imshow(img[0])
+        
+        plt.subplot(142)
+        plt.axis('off')
+        plt.title(get_class_name(original_class))
+        tensor_imshow(img[0])
+        plt.imshow(explanations[i], cmap='jet', alpha=0.5)
+        #plt.colorbar(fraction=0.046, pad=0.04)
 
-    
-    plt.savefig('explanation_res_img_{:04d}.png'.format(i), bbox_inches='tight')
-    plt.close()
+        plt.subplot(143)
+        plt.axis('off')
+        plt.title('thres: {:.2f}, {:.2f}% {}'.format(100*thres_prob, 100*masked_prob, get_class_name(masked_class)))
+        tensor_imshow(masked_image)
+
+        plt.subplot(144)
+        plt.axis('off')
+        plt.title('{:.2f}% {}'.format(100*chang_prob, get_class_name(chang_class)))
+        #plt.title('{:.2f}% {}'.format(100*chang_prob, get_class_name(chang_class)))
+        tensor_imshow(randomly_masked_image[0])
+
+        if original_class == chang_class:
+            plt.savefig('result_unchanged_1/explanation_res_img_{:04d}_random_#{}.png'.format(i, random_idx), bbox_inches='tight')
+        else:
+            plt.savefig('result_changed_1/explanation_res_img_{:04d}_random_#{}.png'.format(i, random_idx), bbox_inches='tight')
+        plt.close()
