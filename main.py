@@ -161,7 +161,7 @@ print('Found {: >5} images belonging to {} classes.'.format(len(dataset), len(da
 print('      {: >5} images will be explained.'.format(len(data_loader) * data_loader.batch_size))
 
 
-## Load model
+## Load models
 model = models.resnet50(True)
 model = nn.Sequential(model, nn.Softmax(dim=1))
 model = model.eval()
