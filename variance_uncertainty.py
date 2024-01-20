@@ -223,12 +223,12 @@ for i, (img, _) in enumerate(data_loader):
             break
         thres_prob -= 0.05
 
+    ## explainability masking
     masked_image = explainability_masking(img[0].float(), explanations[i], p1=thres_prob)
     masked_prob, masked_class = torch.max(model(masked_image.unsqueeze(0)), dim=1)
     masked_prob, masked_class = masked_prob[0].item(), masked_class[0].item()
     #save_image(masked_image, 'masked_img_{:04d}.png'.format(i))
 
-    save_mask = torch.zeros_like(img[0])
     image_list = []
     for random_idx in range(6000):
         randomly_masked_image, random_mask_for_save = random_masking(masked_image)###masked_image
@@ -238,24 +238,17 @@ for i, (img, _) in enumerate(data_loader):
         chang_prob, chang_class = chang_prob[0].item(), chang_class[0].item()
 
         if original_class != chang_class:
-            save_mask += random_mask_for_save
+
+            ## change random_mask_for_save to grayscale
             random_mask_for_save = random_mask_for_save.permute(1,2,0).numpy()
             random_mask_for_save = np.dot(random_mask_for_save[...,:3], weights)
-            random_mask_for_save = np.dot(random_mask_for_save, chang_prob)
+
+            ## append to image_list
             image_list.append(random_mask_for_save)
-
-    if save_mask.is_cuda:
-        save_mask = save_mask.cpu()
-    save_mask = save_mask.permute(1,2,0).numpy()
-
     
-    save_mask = np.dot(save_mask[...,:3], weights)
-    
+    ## pixel_values will be (the number of image x 224 x 224)
     pixel_values = np.stack(image_list, axis=0)
     variance = np.var(pixel_values, axis=0)
-
-    # if save_mask.dtype != np.uint8:
-    #     save_mask = (255*save_mask).astype(np.uint8)
 
     ############ image save for variance
     tensor_imshow(img[0])

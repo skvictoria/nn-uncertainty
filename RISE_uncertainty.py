@@ -258,17 +258,16 @@ for i, (img, _) in enumerate(data_loader):
     #     save_mask = (255*save_mask).astype(np.uint8)
 
     ############# image save for adding
-    # tensor_imshow(img[0])
-    # plt.imshow(save_mask, cmap='jet', alpha=0.5)
-    # plt.savefig("result_masks/uncertainty_res_img_overlay_{:04d}.png".format(i))
-    # plt.close()
+    tensor_imshow(img[0])
+    plt.imshow(save_mask, cmap='jet', alpha=0.5)
+    plt.savefig("result_masks/uncertainty_res_img_overlay_{:04d}.png".format(i))
+    plt.close()
 
     ############# image save for variance
-    # tensor_imshow(img[0])
-    # plt.imshow(variance, cmap='jet', alpha=0.5)
-    # plt.savefig("result_masks/uncertainty_res_img_variance_{:04d}.png".format(i))
-    # plt.close()
-
+    tensor_imshow(img[0])
+    plt.imshow(variance, cmap='jet', alpha=0.5)
+    plt.savefig("result_masks/uncertainty_res_img_variance_{:04d}.png".format(i))
+    plt.close()
 
     ############ image save for RISE
     tensor_imshow(img[0])

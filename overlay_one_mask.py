@@ -112,6 +112,29 @@ def random_masking(image, mask_size=50):
     mask_for_save[:, x:x+mask_size, y:y+mask_size] = 1
     return image.float() * mask, mask_for_save
 
+def random_point_masking(image, num_points=9000):
+    # Create a clone of the image to avoid modifying the original image
+    masked_image = image.clone().float()
+    
+    # Flatten the image to work with it as a 1D array
+    flat_image = masked_image.view(-1)
+    
+    # Generate random indices
+    indices = torch.randperm(flat_image.size(0))[:num_points]
+    
+    # Set the selected random points to zero (mask them)
+    flat_image[indices] = 0
+    
+    # Reshape the image back to its original shape
+    masked_image = flat_image.view_as(image)
+    
+    # Create a mask tensor with zeros and set the selected indices to one
+    mask = torch.zeros_like(flat_image)
+    mask[indices] = 1
+    mask = mask.view_as(image)
+    
+    return masked_image, mask
+
 def random_fraction_masking(image_original, mask_size=50, p1=0.5):
     """
     Apply a random fractional mask to the image.
@@ -212,7 +235,7 @@ for i, (img, _) in enumerate(data_loader):
     #masked_image = invert_masking(img[0].float(), explanations[i])
 
     ##### 1. Set Threshold #####
-    thres_prob = 0.75
+    thres_prob = 0.90
     while 1:
         masked_image = explainability_masking(img[0].float(), explanations[i], p1=thres_prob)
         _, cl = torch.max(model(masked_image.unsqueeze(0)), dim=1)
@@ -228,39 +251,37 @@ for i, (img, _) in enumerate(data_loader):
 
     save_mask = torch.zeros_like(img[0])
     image_list = []
-    for random_idx in range(6000):
-        randomly_masked_image, random_mask_for_save = random_masking(masked_image)###masked_image
+    for random_idx in range(60):
+        randomly_masked_image, random_mask_for_save = random_point_masking(masked_image)
         #save_image(randomly_masked_image, 'randomly_masked_img_{:04d}.png'.format(i))
 
         chang_prob, chang_class = torch.max(model(randomly_masked_image.unsqueeze(0)), dim=1)
         chang_prob, chang_class = chang_prob[0].item(), chang_class[0].item()
         
-        plt.figure(figsize=(10, 5))
-        plt.subplot(141)
-        plt.axis('off')
-        plt.title('{:.2f}% {}'.format(100*original_prob, get_class_name(original_class)))
-        tensor_imshow(img[0])
-        
-        plt.subplot(142)
-        plt.axis('off')
-        plt.title(get_class_name(original_class))
-        tensor_imshow(img[0])
-        plt.imshow(explanations[i], cmap='jet', alpha=0.5)
-        #plt.colorbar(fraction=0.046, pad=0.04)
+        if original_class != chang_class:
+            plt.figure(figsize=(10, 5))
+            plt.subplot(141)
+            plt.axis('off')
+            plt.title('{:.2f}% {}'.format(100*original_prob, get_class_name(original_class)))
+            tensor_imshow(img[0])
+            
+            plt.subplot(142)
+            plt.axis('off')
+            plt.title(get_class_name(original_class))
+            tensor_imshow(img[0])
+            plt.imshow(explanations[i], cmap='jet', alpha=0.5)
+            #plt.colorbar(fraction=0.046, pad=0.04)
 
-        plt.subplot(143)
-        plt.axis('off')
-        plt.title('thres: {:.2f}, {:.2f}% {}'.format(100*thres_prob, 100*masked_prob, get_class_name(masked_class)))
-        tensor_imshow(masked_image)
+            plt.subplot(143)
+            plt.axis('off')
+            plt.title('thres: {:.2f}, {:.2f}% {}'.format(100*thres_prob, 100*masked_prob, get_class_name(masked_class)))
+            tensor_imshow(masked_image)
 
-        plt.subplot(144)
-        plt.axis('off')
-        plt.title('{:.2f}% {}'.format(100*chang_prob, get_class_name(chang_class)))
-        #plt.title('{:.2f}% {}'.format(100*chang_prob, get_class_name(chang_class)))
-        tensor_imshow(randomly_masked_image)
+            plt.subplot(144)
+            plt.axis('off')
+            plt.title('{:.2f}% {}'.format(100*chang_prob, get_class_name(chang_class)))
+            #plt.title('{:.2f}% {}'.format(100*chang_prob, get_class_name(chang_class)))
+            tensor_imshow(randomly_masked_image)
 
-        if original_class == chang_class:
-            plt.savefig('result_unchanged_1/explanation_res_img_{:04d}_random_#{}.png'.format(i, random_idx), bbox_inches='tight')
-        else:
-            plt.savefig('result_changed_1/explanation_res_img_{:04d}_random_#{}.png'.format(i, random_idx), bbox_inches='tight')
-        plt.close()
+            plt.savefig('result_changed_point_7000/explanation_res_img_{:04d}_random_#{}.png'.format(i, random_idx), bbox_inches='tight')
+            plt.close()
