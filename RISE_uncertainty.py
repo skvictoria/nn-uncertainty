@@ -114,6 +114,64 @@ def random_masking(image, mask_size=50):
     mask_for_save[:, x:x+mask_size, y:y+mask_size] = 1
     return image.float() * mask, mask_for_save
 
+
+def random_masking_for_some_fraction(image, mask_size=50, fraction=0.7):
+    mask = torch.ones_like(image).float()
+    x = np.random.randint(0, image.shape[1] - mask_size)
+    y = np.random.randint(0, image.shape[2] - mask_size)
+    # Determine the number of points to mask within the square
+    total_points = mask_size ** 2
+    points_to_mask = int(total_points * fraction)
+
+    # Create a flat array of zeros with the number of points to mask set to one
+    flat_mask = torch.zeros(total_points)
+    flat_mask[:points_to_mask] = 1
+    # Shuffle the mask
+    flat_mask = flat_mask[torch.randperm(total_points)]
+    # Reshape the mask back to the mask size
+    square_mask = flat_mask.view(mask_size, mask_size)
+
+    # Apply the square mask to the selected region in the image
+    mask[:, x:x+mask_size, y:y+mask_size] = 1 - square_mask
+
+    mask_for_save = torch.zeros_like(image)
+    mask_for_save[:, x:x+mask_size, y:y+mask_size] = square_mask
+
+    ## one more time
+    x = np.random.randint(0, image.shape[1] - mask_size)
+    y = np.random.randint(0, image.shape[2] - mask_size)
+    flat_mask = flat_mask[torch.randperm(total_points)]
+    square_mask = flat_mask.view(mask_size, mask_size)
+
+    mask[:, x:x+mask_size, y:y+mask_size] = 1 - square_mask
+    mask_for_save[:, x:x+mask_size, y:y+mask_size] = square_mask
+
+    return image.float() * mask, mask_for_save
+
+def random_point_masking(image, num_points=10000):
+    # Create a clone of the image to avoid modifying the original image
+    cloned_image = image.clone()
+    masked_image = cloned_image.float()
+    
+    # Flatten the image to work with it as a 1D array
+    flat_image = masked_image.view(-1)
+    
+    # Generate random indices
+    indices = torch.randperm(flat_image.size(0))[:num_points]
+    
+    # Set the selected random points to zero (mask them)
+    flat_image[indices] = 0
+    
+    # Reshape the image back to its original shape
+    masked_image = flat_image.view_as(cloned_image)
+    
+    # Create a mask tensor with zeros and set the selected indices to one
+    mask = torch.zeros_like(flat_image)
+    mask[indices] = 1
+    mask = mask.view_as(cloned_image)
+    
+    return masked_image, mask
+
 def random_fraction_masking(image_original, mask_size=50, p1=0.5):
     """
     Apply a random fractional mask to the image.
@@ -228,51 +286,76 @@ for i, (img, _) in enumerate(data_loader):
     masked_prob, masked_class = masked_prob[0].item(), masked_class[0].item()
     #save_image(masked_image, 'masked_img_{:04d}.png'.format(i))
 
-    save_mask = torch.zeros_like(img[0])
     image_list = []
-    for random_idx in range(6000):
-        randomly_masked_image, random_mask_for_save = random_masking(masked_image)###masked_image
+    image_list_for_RISE = []
+    for random_idx in range(10000):
+        randomly_masked_image, random_mask_for_save = random_masking_for_some_fraction(masked_image)###masked_image
         #save_image(randomly_masked_image, 'randomly_masked_img_{:04d}.png'.format(i))
 
         chang_prob, chang_class = torch.max(model(randomly_masked_image.unsqueeze(0)), dim=1)
         chang_prob, chang_class = chang_prob[0].item(), chang_class[0].item()
 
         if original_class != chang_class:
-            save_mask += random_mask_for_save
             random_mask_for_save = random_mask_for_save.permute(1,2,0).numpy()
             random_mask_for_save = np.dot(random_mask_for_save[...,:3], weights)
-            random_mask_for_save = np.dot(random_mask_for_save, chang_prob)
+            random_mask_for_RISE = np.dot(random_mask_for_save, chang_prob)
             image_list.append(random_mask_for_save)
+            image_list_for_RISE.append(random_mask_for_RISE)
 
-    if save_mask.is_cuda:
-        save_mask = save_mask.cpu()
-    save_mask = save_mask.permute(1,2,0).numpy()
-
-    
-    save_mask = np.dot(save_mask[...,:3], weights)
-    
     pixel_values = np.stack(image_list, axis=0)
+    pixel_values_for_RISE = np.stack(image_list_for_RISE, axis=0)
+
+    ## simply adding
+    ones_count = np.sum(pixel_values, axis=0)
+
+    ## variance
     variance = np.var(pixel_values, axis=0)
 
-    # if save_mask.dtype != np.uint8:
-    #     save_mask = (255*save_mask).astype(np.uint8)
+    ## RISE
+    rise = np.var(pixel_values_for_RISE, axis=0)
 
-    ############# image save for adding
+    ## entropy
+    probability = ones_count / len(image_list)
+    with np.errstate(divide='ignore', invalid='ignore'):
+        entropy = - (probability * np.log2(probability + 1e-10))
+        entropy[~np.isfinite(entropy)] = 0
+
+    ## entropy-RISE
+    ones_count_for_RISE = np.sum(pixel_values_for_RISE, axis=0)
+    probability_for_RISE = ones_count_for_RISE / len(image_list_for_RISE)
+    with np.errstate(divide='ignore', invalid='ignore'):
+        entropy_for_RISE = - (probability_for_RISE * np.log2(probability_for_RISE + 1e-10))
+        entropy_for_RISE[~np.isfinite(entropy_for_RISE)] = 0
+
+    ############ image save for simply adding
     tensor_imshow(img[0])
-    plt.imshow(save_mask, cmap='jet', alpha=0.5)
-    plt.savefig("result_masks/uncertainty_res_img_overlay_{:04d}.png".format(i))
+    plt.imshow(ones_count, cmap='jet', alpha=0.5)
+    plt.savefig("result_masks_point_2401201723/uncertainty_res_img_add_{:04d}.png".format(i))
     plt.close()
 
     ############# image save for variance
     tensor_imshow(img[0])
     plt.imshow(variance, cmap='jet', alpha=0.5)
-    plt.savefig("result_masks/uncertainty_res_img_variance_{:04d}.png".format(i))
+    plt.savefig("result_masks_point_2401201723/uncertainty_res_img_variance_{:04d}.png".format(i))
     plt.close()
 
     ############ image save for RISE
     tensor_imshow(img[0])
-    plt.imshow(variance, cmap='jet', alpha=0.5)
-    plt.savefig("result_masks/uncertainty_res_img_RISE_{:04d}.png".format(i))
+    plt.imshow(rise, cmap='jet', alpha=0.5)
+    plt.savefig("result_masks_point_2401201723/uncertainty_res_img_RISE_{:04d}.png".format(i))
     plt.close()
+
+    ############ image save for entropy
+    tensor_imshow(img[0])
+    plt.imshow(entropy, cmap='jet', alpha=0.5)
+    plt.savefig("result_masks_point_2401201723/uncertainty_res_img_entropy_{:04d}.png".format(i))
+    plt.close()
+
+    ############ image save for entropy+RISE
+    tensor_imshow(img[0])
+    plt.imshow(entropy_for_RISE, cmap='jet', alpha=0.5)
+    plt.savefig("result_masks_point_2401201723/uncertainty_res_img_entropyRISE_{:04d}.png".format(i))
+    plt.close()
+
     #im = Image.fromarray(save_mask)
     #im.save("result_masks/uncertainty_res_img_{:04d}.png".format(i))
