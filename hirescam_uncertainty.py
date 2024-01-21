@@ -12,7 +12,7 @@ import torchvision.datasets as datasets
 import torchvision.models as models
 from torchvision.utils import save_image
 
-from pytorch_grad_cam import GradCAM, HiResCAM, ScoreCAM, GradCAMPlusPlus, AblationCAM, XGradCAM, EigenCAM, FullGrad
+from pytorch_grad_cam import HiResCAM, ScoreCAM, GradCAMPlusPlus, AblationCAM, XGradCAM, EigenCAM, FullGrad
 from pytorch_grad_cam.utils.model_targets import ClassifierOutputTarget
 from pytorch_grad_cam.utils.image import show_cam_on_image
 
@@ -21,7 +21,7 @@ from RISE import RISE
 
 from PIL import Image
 
-EXPLAIN_FOR_THE_FIRST_TIME = 1
+EXPLAIN_FOR_THE_FIRST_TIME = 0
 USE_GRADCAM = 1
 
 def example(img, top_k=3, save_path='output.png'):
@@ -134,7 +134,7 @@ def random_masking(image, mask_size=50):
     return image.float() * mask, mask_for_save
 
 
-def random_masking_for_some_fraction(image, mask_size=50, fraction=0.5):
+def random_masking_for_some_fraction(image, mask_size=30, fraction=0.95):
     mask = torch.ones_like(image).float()
     x = np.random.randint(0, image.shape[1] - mask_size)
     y = np.random.randint(0, image.shape[2] - mask_size)
@@ -279,8 +279,8 @@ if (EXPLAIN_FOR_THE_FIRST_TIME == 1):
     explanations = explain_all_for_Gradcam(data_loader, explainer, targets)
     np.save('exp_{:05}-{:05}_hirescam.npy'.format(args.range[0], args.range[-1]), explanations)
 else:
-    explanations_filename = 'exp_{:05}-{:05}_gradcam.npy'.format(args.range[0], args.range[-1])
-    explanations = np.load('/home/sophia/nn-uncertainty/exp_00095-00104_gradcam.npy', allow_pickle=True)
+    explanations_filename = 'exp_{:05}-{:05}_hirescam.npy'.format(args.range[0], args.range[-1])
+    explanations = np.load('/home/sophia/nn-uncertainty/exp_00095-00104_hirescam.npy', allow_pickle=True)
 
 for i, (img, _) in enumerate(data_loader):
     original_prob, original_class = torch.max(model(img.cuda()), dim=1)
@@ -312,7 +312,7 @@ for i, (img, _) in enumerate(data_loader):
 
     image_list = []
     image_list_for_RISE = []
-    for random_idx in range(10):
+    for random_idx in range(40000):
         randomly_masked_image, random_mask_for_save = random_masking_for_some_fraction(masked_image)###masked_image
         #save_image(randomly_masked_image, 'randomly_masked_img_{:04d}.png'.format(i))
 
@@ -320,29 +320,66 @@ for i, (img, _) in enumerate(data_loader):
         chang_prob, chang_class = chang_prob[0].item(), chang_class[0].item()
 
         if original_class != chang_class:
-            plt.figure(figsize=(10, 5))
-            plt.subplot(141)
-            plt.axis('off')
-            plt.title('{:.2f}% {}'.format(100*original_prob, get_class_name(original_class)))
-            tensor_imshow(img[0])
-            
-            plt.subplot(142)
-            plt.axis('off')
-            plt.title(get_class_name(original_class))
-            tensor_imshow(img[0])
-            plt.imshow(explanations[i], cmap='jet', alpha=0.5)
-            #plt.colorbar(fraction=0.046, pad=0.04)
+            random_mask_for_save = random_mask_for_save.permute(1,2,0).numpy()
+            random_mask_for_save = np.dot(random_mask_for_save[...,:3], weights)
+            random_mask_for_RISE = np.dot(random_mask_for_save, chang_prob)
+            image_list.append(random_mask_for_save)
+            image_list_for_RISE.append(random_mask_for_RISE)
 
-            plt.subplot(143)
-            plt.axis('off')
-            plt.title('thres: {:.2f}, {:.2f}% {}'.format(100*thres_prob, 100*masked_prob, get_class_name(masked_class)))
-            tensor_imshow(masked_image)
+    pixel_values = np.stack(image_list, axis=0)
+    pixel_values_for_RISE = np.stack(image_list_for_RISE, axis=0)
 
-            plt.subplot(144)
-            plt.axis('off')
-            plt.title('{:.2f}% {}'.format(100*chang_prob, get_class_name(chang_class)))
-            #plt.title('{:.2f}% {}'.format(100*chang_prob, get_class_name(chang_class)))
-            tensor_imshow(randomly_masked_image)
+    ## simply adding
+    ones_count = np.sum(pixel_values, axis=0)
 
-            plt.savefig('hirescam_overlay_one_mask/explanation_res_img_{:04d}_random_#{}.png'.format(i, random_idx), bbox_inches='tight')
-            plt.close()
+    ## variance
+    variance = np.var(pixel_values, axis=0)
+
+    ## RISE
+    rise = np.var(pixel_values_for_RISE, axis=0)
+
+    ## entropy
+    probability = ones_count / len(image_list)
+    with np.errstate(divide='ignore', invalid='ignore'):
+        entropy = - (probability * np.log2(probability + 1e-10))
+        entropy[~np.isfinite(entropy)] = 0
+
+    ## entropy-RISE
+    ones_count_for_RISE = np.sum(pixel_values_for_RISE, axis=0)
+    probability_for_RISE = ones_count_for_RISE / len(image_list_for_RISE)
+    with np.errstate(divide='ignore', invalid='ignore'):
+        entropy_for_RISE = - (probability_for_RISE * np.log2(probability_for_RISE + 1e-10))
+        entropy_for_RISE[~np.isfinite(entropy_for_RISE)] = 0
+
+    ############ image save for simply adding
+    tensor_imshow(img[0])
+    plt.imshow(ones_count, cmap='jet', alpha=0.5)
+    plt.savefig("hirescam_masks_point_2401211527/uncertainty_res_img_add_{:04d}.png".format(i))
+    plt.close()
+
+    ############# image save for variance
+    tensor_imshow(img[0])
+    plt.imshow(variance, cmap='jet', alpha=0.5)
+    plt.savefig("hirescam_masks_point_2401211527/uncertainty_res_img_variance_{:04d}.png".format(i))
+    plt.close()
+
+    ############ image save for RISE
+    tensor_imshow(img[0])
+    plt.imshow(rise, cmap='jet', alpha=0.5)
+    plt.savefig("hirescam_masks_point_2401211527/uncertainty_res_img_RISE_{:04d}.png".format(i))
+    plt.close()
+
+    ############ image save for entropy
+    tensor_imshow(img[0])
+    plt.imshow(entropy, cmap='jet', alpha=0.5)
+    plt.savefig("hirescam_masks_point_2401211527/uncertainty_res_img_entropy_{:04d}.png".format(i))
+    plt.close()
+
+    ############ image save for entropy+RISE
+    tensor_imshow(img[0])
+    plt.imshow(entropy_for_RISE, cmap='jet', alpha=0.5)
+    plt.savefig("hirescam_masks_point_2401211527/uncertainty_res_img_entropyRISE_{:04d}.png".format(i))
+    plt.close()
+
+    #im = Image.fromarray(save_mask)
+    #im.save("result_masks/uncertainty_res_img_{:04d}.png".format(i))
