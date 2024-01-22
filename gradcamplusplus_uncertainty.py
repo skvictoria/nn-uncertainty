@@ -12,7 +12,7 @@ import torchvision.datasets as datasets
 import torchvision.models as models
 from torchvision.utils import save_image
 
-from pytorch_grad_cam import GradCAM, HiResCAM, ScoreCAM, GradCAMPlusPlus, AblationCAM, XGradCAM, EigenCAM, FullGrad
+from pytorch_grad_cam import GradCAMPlusPlus, AblationCAM, XGradCAM, EigenCAM, FullGrad
 from pytorch_grad_cam.utils.model_targets import ClassifierOutputTarget
 from pytorch_grad_cam.utils.image import show_cam_on_image
 
@@ -261,7 +261,7 @@ model = model.cuda()
 
 if USE_GRADCAM==1:
     target_layers = [model.layer4[-1]]
-    explainer = GradCAM(model=model, target_layers=target_layers)
+    explainer = GradCAMPlusPlus(model=model, target_layers=target_layers)
     targets=[ClassifierOutputTarget(295)]
 else:
     ## create explainer instance
@@ -277,10 +277,10 @@ else:
 
 if (EXPLAIN_FOR_THE_FIRST_TIME == 1):
     explanations = explain_all_for_Gradcam(data_loader, explainer, targets)
-    np.save('exp_{:05}-{:05}_gradcam.npy'.format(args.range[0], args.range[-1]), explanations)
+    np.save('exp_{:05}-{:05}_gradcamplusplus.npy'.format(args.range[0], args.range[-1]), explanations)
 else:
-    explanations_filename = 'exp_{:05}-{:05}_gradcam.npy'.format(args.range[0], args.range[-1])
-    explanations = np.load('/home/sophia/nn-uncertainty/exp_00095-00104_gradcam.npy', allow_pickle=True)
+    explanations_filename = 'exp_{:05}-{:05}_gradcamplusplus.npy'.format(args.range[0], args.range[-1])
+    explanations = np.load('/home/sophia/nn-uncertainty/exp_00095-00104_gradcamplusplus.npy', allow_pickle=True)
 
 for i, (img, _) in enumerate(data_loader):
     if(i<5):
@@ -319,6 +319,7 @@ for i, (img, _) in enumerate(data_loader):
         #save_image(randomly_masked_image, 'randomly_masked_img_{:04d}.png'.format(i))
 
         prob_batch = model(randomly_masked_image.cuda().unsqueeze(0))
+        #_, chang_class = torch.max(model(randomly_masked_image.cuda().unsqueeze(0)), dim=1)
         chang_prob = torch.nn.functional.softmax(prob_batch, dim=1)
         chang_prob, chang_class = torch.max(chang_prob, dim=1)
         chang_prob, chang_class = chang_prob[0].item(), chang_class[0].item()
@@ -358,31 +359,31 @@ for i, (img, _) in enumerate(data_loader):
     ############ image save for simply adding
     tensor_imshow(img[0])
     plt.imshow(ones_count, cmap='jet', alpha=0.5)
-    plt.savefig("gradcam_masks_point_2401212305/uncertainty_res_img_add_{:04d}.png".format(i))
+    plt.savefig("gradcamplusplus_masks_point_2401212026/uncertainty_res_img_add_{:04d}.png".format(i))
     plt.close()
 
     ############# image save for variance
     tensor_imshow(img[0])
     plt.imshow(variance, cmap='jet', alpha=0.5)
-    plt.savefig("gradcam_masks_point_2401212305/uncertainty_res_img_variance_{:04d}.png".format(i))
+    plt.savefig("gradcamplusplus_masks_point_2401212026/uncertainty_res_img_variance_{:04d}.png".format(i))
     plt.close()
 
     ############ image save for RISE
     tensor_imshow(img[0])
     plt.imshow(rise, cmap='jet', alpha=0.5)
-    plt.savefig("gradcam_masks_point_2401212305/uncertainty_res_img_RISE_{:04d}.png".format(i))
+    plt.savefig("gradcamplusplus_masks_point_2401212026/uncertainty_res_img_RISE_{:04d}.png".format(i))
     plt.close()
 
     ############ image save for entropy
     tensor_imshow(img[0])
     plt.imshow(entropy, cmap='jet', alpha=0.5)
-    plt.savefig("gradcam_masks_point_2401212305/uncertainty_res_img_entropy_{:04d}.png".format(i))
+    plt.savefig("gradcamplusplus_masks_point_2401212026/uncertainty_res_img_entropy_{:04d}.png".format(i))
     plt.close()
 
     ############ image save for entropy+RISE
     tensor_imshow(img[0])
     plt.imshow(entropy_for_RISE, cmap='jet', alpha=0.5)
-    plt.savefig("gradcam_masks_point_2401212305/uncertainty_res_img_entropyRISE_{:04d}.png".format(i))
+    plt.savefig("gradcamplusplus_masks_point_2401212026/uncertainty_res_img_entropyRISE_{:04d}.png".format(i))
     plt.close()
 
     #im = Image.fromarray(save_mask)

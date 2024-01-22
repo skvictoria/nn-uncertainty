@@ -261,7 +261,7 @@ model = model.cuda()
 
 if USE_GRADCAM==1:
     target_layers = [model.layer4[-1]]
-    explainer = HiResCAM(model=model, target_layers=target_layers)
+    explainer = GradCAMPlusPlus(model=model, target_layers=target_layers)
     targets=[ClassifierOutputTarget(295)]
 else:
     ## create explainer instance
@@ -277,10 +277,10 @@ else:
 
 if (EXPLAIN_FOR_THE_FIRST_TIME == 1):
     explanations = explain_all_for_Gradcam(data_loader, explainer, targets)
-    np.save('exp_{:05}-{:05}_hirescam.npy'.format(args.range[0], args.range[-1]), explanations)
+    np.save('exp_{:05}-{:05}_gradcamplusplus.npy'.format(args.range[0], args.range[-1]), explanations)
 else:
-    explanations_filename = 'exp_{:05}-{:05}_gradcam.npy'.format(args.range[0], args.range[-1])
-    explanations = np.load('/home/sophia/nn-uncertainty/exp_00095-00104_gradcam.npy', allow_pickle=True)
+    explanations_filename = 'exp_{:05}-{:05}_gradcamplusplus.npy'.format(args.range[0], args.range[-1])
+    explanations = np.load('/home/sophia/nn-uncertainty/exp_00095-00104_gradcamplusplus.npy', allow_pickle=True)
 
 for i, (img, _) in enumerate(data_loader):
     original_prob, original_class = torch.max(model(img.cuda()), dim=1)
@@ -344,5 +344,5 @@ for i, (img, _) in enumerate(data_loader):
             #plt.title('{:.2f}% {}'.format(100*chang_prob, get_class_name(chang_class)))
             tensor_imshow(randomly_masked_image)
 
-            plt.savefig('hirescam_overlay_one_mask/explanation_res_img_{:04d}_random_#{}.png'.format(i, random_idx), bbox_inches='tight')
+            plt.savefig('gradcamplusplus_overlay_one_mask/explanation_res_img_{:04d}_random_#{}.png'.format(i, random_idx), bbox_inches='tight')
             plt.close()

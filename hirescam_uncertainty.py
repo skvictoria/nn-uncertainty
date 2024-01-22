@@ -283,6 +283,8 @@ else:
     explanations = np.load('/home/sophia/nn-uncertainty/exp_00095-00104_hirescam.npy', allow_pickle=True)
 
 for i, (img, _) in enumerate(data_loader):
+    if(i<5):
+        continue
     original_prob, original_class = torch.max(model(img.cuda()), dim=1)
     original_prob, original_class = original_prob[0].item(), original_class[0].item()
     #save_image(img[0], 'original_img_{:04d}.png'.format(i))
@@ -316,7 +318,9 @@ for i, (img, _) in enumerate(data_loader):
         randomly_masked_image, random_mask_for_save = random_masking_for_some_fraction(masked_image)###masked_image
         #save_image(randomly_masked_image, 'randomly_masked_img_{:04d}.png'.format(i))
 
-        chang_prob, chang_class = torch.max(model(randomly_masked_image.cuda().unsqueeze(0)), dim=1)
+        prob_batch = model(randomly_masked_image.cuda().unsqueeze(0))
+        chang_prob = torch.nn.functional.softmax(prob_batch, dim=1)
+        chang_prob, chang_class = torch.max(chang_prob, dim=1)
         chang_prob, chang_class = chang_prob[0].item(), chang_class[0].item()
 
         if original_class != chang_class:
@@ -354,31 +358,31 @@ for i, (img, _) in enumerate(data_loader):
     ############ image save for simply adding
     tensor_imshow(img[0])
     plt.imshow(ones_count, cmap='jet', alpha=0.5)
-    plt.savefig("hirescam_masks_point_2401211527/uncertainty_res_img_add_{:04d}.png".format(i))
+    plt.savefig("hirescam_masks_point_2401220039/uncertainty_res_img_add_{:04d}.png".format(i))
     plt.close()
 
     ############# image save for variance
     tensor_imshow(img[0])
     plt.imshow(variance, cmap='jet', alpha=0.5)
-    plt.savefig("hirescam_masks_point_2401211527/uncertainty_res_img_variance_{:04d}.png".format(i))
+    plt.savefig("hirescam_masks_point_2401220039/uncertainty_res_img_variance_{:04d}.png".format(i))
     plt.close()
 
     ############ image save for RISE
     tensor_imshow(img[0])
     plt.imshow(rise, cmap='jet', alpha=0.5)
-    plt.savefig("hirescam_masks_point_2401211527/uncertainty_res_img_RISE_{:04d}.png".format(i))
+    plt.savefig("hirescam_masks_point_2401220039/uncertainty_res_img_RISE_{:04d}.png".format(i))
     plt.close()
 
     ############ image save for entropy
     tensor_imshow(img[0])
     plt.imshow(entropy, cmap='jet', alpha=0.5)
-    plt.savefig("hirescam_masks_point_2401211527/uncertainty_res_img_entropy_{:04d}.png".format(i))
+    plt.savefig("hirescam_masks_point_2401220039/uncertainty_res_img_entropy_{:04d}.png".format(i))
     plt.close()
 
     ############ image save for entropy+RISE
     tensor_imshow(img[0])
     plt.imshow(entropy_for_RISE, cmap='jet', alpha=0.5)
-    plt.savefig("hirescam_masks_point_2401211527/uncertainty_res_img_entropyRISE_{:04d}.png".format(i))
+    plt.savefig("hirescam_masks_point_2401220039/uncertainty_res_img_entropyRISE_{:04d}.png".format(i))
     plt.close()
 
     #im = Image.fromarray(save_mask)
