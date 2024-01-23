@@ -261,7 +261,7 @@ model = model.cuda()
 
 if USE_GRADCAM==1:
     target_layers = [model.layer4[-1]]
-    explainer = GradCAMPlusPlus(model=model, target_layers=target_layers)
+    explainer = HiResCAM(model=model, target_layers=target_layers)
     targets=[ClassifierOutputTarget(295)]
 else:
     ## create explainer instance
@@ -277,12 +277,14 @@ else:
 
 if (EXPLAIN_FOR_THE_FIRST_TIME == 1):
     explanations = explain_all_for_Gradcam(data_loader, explainer, targets)
-    np.save('exp_{:05}-{:05}_gradcamplusplus.npy'.format(args.range[0], args.range[-1]), explanations)
+    np.save('exp_{:05}-{:05}_hirescam.npy'.format(args.range[0], args.range[-1]), explanations)
 else:
-    explanations_filename = 'exp_{:05}-{:05}_gradcamplusplus.npy'.format(args.range[0], args.range[-1])
-    explanations = np.load('/home/sophia/nn-uncertainty/exp_00095-00104_gradcamplusplus.npy', allow_pickle=True)
+    explanations_filename = 'exp_{:05}-{:05}_hirescam.npy'.format(args.range[0], args.range[-1])
+    explanations = np.load('/home/sophia/nn-uncertainty/exp_00095-00104_hirescam.npy', allow_pickle=True)
 
 for i, (img, _) in enumerate(data_loader):
+    if(i!=2):
+        continue
     original_prob, original_class = torch.max(model(img.cuda()), dim=1)
     original_prob, original_class = original_prob[0].item(), original_class[0].item()
     #save_image(img[0], 'original_img_{:04d}.png'.format(i))
@@ -312,11 +314,14 @@ for i, (img, _) in enumerate(data_loader):
 
     image_list = []
     image_list_for_RISE = []
-    for random_idx in range(10):
+    for random_idx in range(200):
         randomly_masked_image, random_mask_for_save = random_masking_for_some_fraction(masked_image)###masked_image
         #save_image(randomly_masked_image, 'randomly_masked_img_{:04d}.png'.format(i))
 
-        chang_prob, chang_class = torch.max(model(randomly_masked_image.cuda().unsqueeze(0)), dim=1)
+        prob_batch = model(randomly_masked_image.cuda().unsqueeze(0))
+        #_, chang_class = torch.max(model(randomly_masked_image.cuda().unsqueeze(0)), dim=1)
+        chang_prob = torch.nn.functional.softmax(prob_batch, dim=1)
+        chang_prob, chang_class = torch.max(chang_prob, dim=1)
         chang_prob, chang_class = chang_prob[0].item(), chang_class[0].item()
 
         if original_class != chang_class:
@@ -344,5 +349,5 @@ for i, (img, _) in enumerate(data_loader):
             #plt.title('{:.2f}% {}'.format(100*chang_prob, get_class_name(chang_class)))
             tensor_imshow(randomly_masked_image)
 
-            plt.savefig('gradcamplusplus_overlay_one_mask/explanation_res_img_{:04d}_random_#{}.png'.format(i, random_idx), bbox_inches='tight')
+            plt.savefig('hirescam_overlay_one_mask/explanation_res_img_{:04d}_random_#{}.png'.format(i, random_idx), bbox_inches='tight')
             plt.close()
