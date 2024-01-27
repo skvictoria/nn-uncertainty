@@ -21,7 +21,8 @@ from RISE import RISE
 
 from PIL import Image
 
-EXPLAIN_FOR_THE_FIRST_TIME = 0
+EXPLAIN_FOR_THE_FIRST_TIME = 1
+os.environ["CUDA_VISIBLE_DEVICES"]="0"
 
 def example(img, top_k=3, save_path='output.png'):
     saliency = explainer(img.cuda()).cpu().numpy()
@@ -119,7 +120,7 @@ def random_masking(image, mask_size=50):
     return image.float() * mask, mask_for_save
 
 
-def random_masking_for_some_fraction(image, mask_size=50, fraction=0.7):
+def random_masking_for_some_fraction(image, mask_size=30, fraction=0.95):
     mask = torch.ones_like(image).float()
     x = np.random.randint(0, image.shape[1] - mask_size)
     y = np.random.randint(0, image.shape[2] - mask_size)
@@ -200,6 +201,13 @@ def random_fraction_masking(image_original, mask_size=50, p1=0.5):
 
     return image.float()
 
+def find_class_row(class_name, filename='synset_words.txt'):
+    with open(filename, 'r') as file:
+        for i, line in enumerate(file):
+            if class_name in line:
+                return i
+    return -1
+
 cudnn.benchmark = True
 
 args = Dummy()
@@ -211,9 +219,10 @@ args.workers = 8
 # Directory with images split into class folders.
 # Since we don't use ground truth labels for saliency all images can be 
 # moved to one class folder.
-args.datadir = '/data/datasets/ImageNet/val/'
+#args.datadir = '/data/datasets/ImageNet/val/'
+args.datadir = '/home/sophia/imagenet-o'
 # Sets the range of images to be explained for dataloader.
-args.range = range(95, 105)
+args.range = range(0, 500)
 # Size of imput images.
 args.input_size = (224, 224)
 # Size of batches for GPU. 
@@ -257,14 +266,20 @@ else:
 
 if (EXPLAIN_FOR_THE_FIRST_TIME == 1):
     explanations = explain_all(data_loader, explainer)
-    np.save('exp_{:05}-{:05}.npy'.format(args.range[0], args.range[-1]), explanations)
+    #np.save('exp_{:05}-{:05}.npy'.format(args.range[0], args.range[-1]), explanations)
 else:
     explanations_filename = 'exp_{:05}-{:05}.npy'.format(args.range[0], args.range[-1])
     explanations = np.load('/home/sophia/nn-uncertainty/exp_00095-00104.npy', allow_pickle=True)
 
-for i, (img, _) in enumerate(data_loader):
+for i, (img, data_classes) in enumerate(data_loader):
+    data_classes = data_classes[0].item()
     original_prob, original_class = torch.max(model(img.cuda()), dim=1)
     original_prob, original_class = original_prob[0].item(), original_class[0].item()
+    
+    if(find_class_row(data_loader.dataset.classes[data_classes]) == original_class[0].item()):
+        continue
+
+    
     #save_image(img[0], 'original_img_{:04d}.png'.format(i))
     explanation_tensor = torch.from_numpy(explanations[i]).unsqueeze(0)
     #save_image(explanation_tensor, 'explanations_{:04d}.png'.format(i))
@@ -276,7 +291,7 @@ for i, (img, _) in enumerate(data_loader):
     #masked_image = invert_masking(img[0].float(), explanations[i])
 
     ##### 1. Set Threshold #####
-    thres_prob = 0.90
+    thres_prob = 0.99
     while 1:
         masked_image = explainability_masking(img[0].float(), explanations[i], p1=thres_prob)
         _, cl = torch.max(model(masked_image.unsqueeze(0)), dim=1)
@@ -285,6 +300,8 @@ for i, (img, _) in enumerate(data_loader):
             break
         thres_prob -= 0.05
 
+    if(thres_prob >=1):
+        thres_prob = 0.99
     masked_image = explainability_masking(img[0].float(), explanations[i], p1=thres_prob)
     masked_prob, masked_class = torch.max(model(masked_image.unsqueeze(0)), dim=1)
     masked_prob, masked_class = masked_prob[0].item(), masked_class[0].item()
@@ -299,13 +316,15 @@ for i, (img, _) in enumerate(data_loader):
         chang_prob, chang_class = torch.max(model(randomly_masked_image.unsqueeze(0)), dim=1)
         chang_prob, chang_class = chang_prob[0].item(), chang_class[0].item()
 
-        if original_class != chang_class:
+        if find_class_row(data_loader.dataset.classes[data_classes]) != chang_class:
             random_mask_for_save = random_mask_for_save.permute(1,2,0).numpy()
             random_mask_for_save = np.dot(random_mask_for_save[...,:3], weights)
             random_mask_for_RISE = np.dot(random_mask_for_save, chang_prob)
             image_list.append(random_mask_for_save)
             image_list_for_RISE.append(random_mask_for_RISE)
 
+    if(len(image_list)==0 or len(image_list_for_RISE)==0):
+        continue
     pixel_values = np.stack(image_list, axis=0)
     pixel_values_for_RISE = np.stack(image_list_for_RISE, axis=0)
 
@@ -334,31 +353,36 @@ for i, (img, _) in enumerate(data_loader):
     ############ image save for simply adding
     tensor_imshow(img[0])
     plt.imshow(ones_count, cmap='jet', alpha=0.5)
-    plt.savefig("result_masks_point_2401201723/uncertainty_res_img_add_{:04d}.png".format(i))
+    plt.savefig("result-imagenet-o/uncertainty_res_img_add_{:04d}.png".format(i))
     plt.close()
 
     ############# image save for variance
     tensor_imshow(img[0])
     plt.imshow(variance, cmap='jet', alpha=0.5)
-    plt.savefig("result_masks_point_2401201723/uncertainty_res_img_variance_{:04d}.png".format(i))
+    plt.savefig("result-imagenet-o/uncertainty_res_img_variance_{:04d}.png".format(i))
     plt.close()
 
     ############ image save for RISE
     tensor_imshow(img[0])
     plt.imshow(rise, cmap='jet', alpha=0.5)
-    plt.savefig("result_masks_point_2401201723/uncertainty_res_img_RISE_{:04d}.png".format(i))
+    plt.savefig("result-imagenet-o/uncertainty_res_img_RISE_{:04d}.png".format(i))
     plt.close()
 
     ############ image save for entropy
     tensor_imshow(img[0])
     plt.imshow(entropy, cmap='jet', alpha=0.5)
-    plt.savefig("result_masks_point_2401201723/uncertainty_res_img_entropy_{:04d}.png".format(i))
+    plt.savefig("result-imagenet-o/uncertainty_res_img_entropy_{:04d}.png".format(i))
     plt.close()
 
     ############ image save for entropy+RISE
     tensor_imshow(img[0])
     plt.imshow(entropy_for_RISE, cmap='jet', alpha=0.5)
-    plt.savefig("result_masks_point_2401201723/uncertainty_res_img_entropyRISE_{:04d}.png".format(i))
+    plt.savefig("result-imagenet-o/uncertainty_res_img_entropyRISE_{:04d}.png".format(i))
+    plt.close()
+
+    tensor_imshow(img[0])
+    plt.imshow(explanations[i], cmap='jet', alpha=0.5)
+    plt.savefig("result-imagenet-o/originalexplainability_{:04d}.png".format(i))
     plt.close()
 
     #im = Image.fromarray(save_mask)
