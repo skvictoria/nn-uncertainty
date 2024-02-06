@@ -276,7 +276,7 @@ for i, (img, data_classes) in enumerate(data_loader):
     original_prob, original_class = torch.max(model(img.cuda()), dim=1)
     original_prob, original_class = original_prob[0].item(), original_class[0].item()
     
-    if(find_class_row(data_loader.dataset.classes[data_classes]) == original_class[0].item()):
+    if(find_class_row(data_loader.dataset.classes[data_classes]) == original_class):
         continue
 
     
