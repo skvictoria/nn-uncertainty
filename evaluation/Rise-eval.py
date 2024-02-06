@@ -28,7 +28,7 @@ from RISE import RISE
 from PIL import Image
 import pandas as pd
 
-EXPLAIN_FOR_THE_FIRST_TIME = 1
+EXPLAIN_FOR_THE_FIRST_TIME = 0
 os.environ["CUDA_VISIBLE_DEVICES"]="0"
 
 def example(img, top_k=3, save_path='output.png'):
@@ -208,7 +208,7 @@ def random_fraction_masking(image_original, mask_size=50, p1=0.5):
 
     return image.float()
 
-def find_class_row(class_name, filename='synset_words.txt'):
+def find_class_row(class_name, filename='/home/sophia/nn-uncertainty/synset_words.txt'):
     with open(filename, 'r') as file:
         for i, line in enumerate(file):
             if class_name in line:
@@ -216,9 +216,16 @@ def find_class_row(class_name, filename='synset_words.txt'):
     return -1
 
 def calculate_iou(image1, image2):
-    intersection = np.logical_and(image1, image2)
-    union = np.logical_or(image1, image2)
-    iou_score = np.sum(intersection) / np.sum(union)
+    # 교집합: 두 이미지 픽셀 값의 최소값을 사용
+    intersection = np.minimum(image1, image2)
+    
+    # 합집합: 두 이미지 픽셀 값의 최대값을 사용
+    union = np.maximum(image1, image2)
+    
+    # 합집합이 0인 픽셀을 제외하고 IOU 계산
+    non_zero_union = union > 0
+    iou_score = np.sum(intersection[non_zero_union]) / np.sum(union[non_zero_union])
+    
     return iou_score
 
 def calculate_snr(um):
@@ -242,6 +249,8 @@ def process_batch(data_loader, model, explainer, explanations, batch_number, sta
     batch_results_true = pd.DataFrame(columns=['Accuracy', 'IOU', 'SNR', 'LogLikelihood'])
     batch_results_false = pd.DataFrame(columns=['Accuracy', 'IOU', 'SNR', 'LogLikelihood'])
 
+    list_result_true = []
+    list_result_false = []
     for i, (img, data_classes) in enumerate(data_loader, start=start_index):
         
         data_classes = data_classes[0].item()
@@ -325,33 +334,28 @@ def process_batch(data_loader, model, explainer, explanations, batch_number, sta
         tensor_imshow(img[0])
         plt.imshow(variance, cmap='jet', alpha=0.5)
         plt.title('acc {:.2f}, iou {:.2f}, snr {:.2f}, log {:.2f}'.format(100*original_prob, iou_score, snr_value, log_likelihood_value))
-        plt.savefig("../result-target-diff/modelagnostic_variance_{:04d}.png".format(i+14050))
+        plt.savefig("/home/sophia/nn-uncertainty/result-target-diff/modelagnostic_variance_{:04d}.png".format(i+14050))
         plt.close()
 
         tensor_imshow(img[0])
         plt.imshow(explanations[i], cmap='jet', alpha=0.5)
         plt.title('{:.2f}% , original {} -> {}'.format(100*original_prob, get_class_name(find_class_row(data_loader.dataset.classes[data_classes])), get_class_name(original_class)))
-        plt.savefig("../result-target-diff/modelagnostic_originalexplainability_{:04d}.png".format(i+14050))
+        plt.savefig("/home/sophia/nn-uncertainty/result-target-diff/modelagnostic_originalexplainability_{:04d}.png".format(i+14050))
         plt.close()
 
         # if class is same
         if(find_class_row(data_loader.dataset.classes[data_classes]) == original_class):
-            batch_results_true = batch_results_true.append({
-                'Accuracy': original_prob*100,
-                'IOU': iou_score,
-                'SNR': snr_value,
-                'LogLikelihood': log_likelihood_value
-            }, ignore_index=True)
+            list_result_true.append([original_prob*100, iou_score, snr_value, log_likelihood_value])
 
         else:
-            batch_results_false = batch_results_false.append({
-                'Accuracy': original_prob*100,
-                'IOU': iou_score,
-                'SNR': snr_value,
-                'LogLikelihood': log_likelihood_value
-            }, ignore_index=True)
+            list_result_false.append([original_prob*100, iou_score, snr_value, log_likelihood_value])
+            
+        np.save('uncertain_{:05}.npy'.format(i), variance)
+        print("{} th for loop processed..".format(i))
     
     # 배치 결과를 CSV 파일로 저장합니다.
+    batch_results_true = pd.concat(list_result_true)
+    batch_results_false = pd.concat(list_result_false)
     batch_results_true.to_csv(f'/home/sophia/nn-uncertainty/evaluation/metrics_results_batch_true_{batch_number}.csv', index=False)
     batch_results_false.to_csv(f'/home/sophia/nn-uncertainty/evaluation/metrics_results_batch_false_{batch_number}.csv', index=False)
     print(f"Batch {batch_number} saved.")
@@ -419,7 +423,7 @@ if (EXPLAIN_FOR_THE_FIRST_TIME == 1):
     np.save('exp_{:05}-{:05}.npy'.format(args.range[0], args.range[-1]), explanations)
 else:
     explanations_filename = 'exp_{:05}-{:05}.npy'.format(args.range[0], args.range[-1])
-    explanations = np.load('/home/seulgi/nn-uncertainty/exp_14000-14999.npy', allow_pickle=True)
+    explanations = np.load('/home/sophia/nn-uncertainty/evaluation/exp_14000-14999.npy', allow_pickle=True)
 
 
 # 전체 이미지를 배치 단위로 처리합니다.
