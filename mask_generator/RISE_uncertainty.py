@@ -23,14 +23,14 @@ from utils import *
 from RISE import RISE
 import pandas as pd
 
-EXPLAIN_FOR_THE_FIRST_TIME = 1
-os.environ["CUDA_VISIBLE_DEVICES"]="1"
+EXPLAIN_FOR_THE_FIRST_TIME = 0
+os.environ["CUDA_VISIBLE_DEVICES"]="0"
 ## TODO: model change
 ## image dir
-image_dir = ['/data/datasets/ImageNet/val/', range(15000, 15020)]
+image_dir = ['/data/datasets/ImageNet/val/', range(17000, 17500)]
 explanation_dir = '/home/sophia/nn-uncertainty/mask_generator/explainers'
 mask_dir = '/home/sophia/nn-uncertainty/mask_generator/masks'
-output_dir = '/home/sophia/nn-uncertainty/0220-result' # for visualization
+output_dir = '/home/sophia/nn-uncertainty/evaluation/0220-result' # for visualization
 csv_output_dir = '/home/sophia/nn-uncertainty/evaluation/0220-csv'
 #image_dir = '/home/seulgi/imagenet-o'
 #args.range = range(0, 1000)
@@ -220,12 +220,29 @@ def find_class_row(class_name, filename='/home/sophia/nn-uncertainty/synset_word
                 return i
     return -1
 
+def normalize_image(image):
+    # 이미지의 최소값과 최대값을 구함
+    min_val = np.min(image)
+    max_val = np.max(image)
+    
+    # 이미지 정규화: (image - min_val) / (max_val - min_val)
+    # 최소값을 빼고 범위를 나누어 [0, 1] 범위로 조정
+    normalized_image = (image - min_val) / (max_val - min_val) if max_val > min_val else image - min_val
+    
+    return normalized_image
+
 def calculate_iou(image1, image2):
+    image1_normalized = normalize_image(image1)
+    image2_normalized = normalize_image(image2)
+
+    image1_normalized = np.where(image1_normalized > np.mean(image1_normalized), 1, 0)
+    image2_normalized = np.where(image2_normalized > np.mean(image2_normalized), 1, 0)
+
     # 교집합: 두 이미지 픽셀 값의 최소값을 사용
-    intersection = np.minimum(image1, image2)
+    intersection = np.minimum(image1_normalized, image2_normalized)
     
     # 합집합: 두 이미지 픽셀 값의 최대값을 사용
-    union = np.maximum(image1, image2)
+    union = np.maximum(image1_normalized, image2_normalized)
     
     # 합집합이 0인 픽셀을 제외하고 IOU 계산
     non_zero_union = union > 0
@@ -241,23 +258,31 @@ def calculate_snr(um):
 
 def calculate_log_likelihood(image1, image2):
     # normalize images
-    image1_normalized = image1 / 255.0
-    image2_normalized = image2 / 255.0
+    # image1_normalized = image1 / 255.0
+    # image2_normalized = image2 / 255.0
+    image1_normalized = normalize_image(image1)
+    image2_normalized = normalize_image(image2)
 
     epsilon = 1e-12
-    log_likelihood = np.sum(image1_normalized * np.log(image2_normalized + epsilon) + 
-                            (1 - image1_normalized) * np.log(1 - image2_normalized + epsilon))
+    log_likelihood = -np.sum((image1_normalized - image2_normalized) ** 2)
+    # log_likelihood = np.sum(image1_normalized * np.log(image2_normalized + epsilon) + 
+    #                         (1 - image1_normalized) * np.log(1 - image2_normalized + epsilon))
     return log_likelihood
+
 
 # 배치를 처리하는 함수
 def process_batch(data_loader, model, explainer, explanations, batch_number, start_index):
     batch_results_true = pd.DataFrame(columns=['Accuracy', 'IOU', 'SNR', 'LogLikelihood'])
     batch_results_false = pd.DataFrame(columns=['Accuracy', 'IOU', 'SNR', 'LogLikelihood'])
 
+    uncertain_randommasks = np.load(uncertain_maskpath)
+    uncertain_randommasks = torch.from_numpy(uncertain_randommasks).float().cuda()
+
     list_result_true = []
     list_result_false = []
     for i, (img, data_classes) in enumerate(data_loader, start=start_index):
-        
+        if(i<17):
+            continue
         data_classes = data_classes[0].item()
         original_prob, original_class = torch.max(model(img.cuda()), dim=1)
         original_prob, original_class = original_prob[0].item(), original_class[0].item()
@@ -276,24 +301,30 @@ def process_batch(data_loader, model, explainer, explanations, batch_number, sta
         # image_matrix.save('/home/sophia/voice/images/{}.png'.format(i))
 
         explainability_list = []
-        for random_idx in range(6000):
+        for random_idx in range(100):
+            print(random_idx)
             # Random_mask_for_save: grayscale version of mask
-            randomly_masked_image, random_mask_for_save = random_masking_for_some_fraction(img[0])
-            random_mask_for_save = random_mask_for_save.permute(1,2,0).numpy()
-            random_mask_for_save = np.dot(random_mask_for_save[...,:3], weights)
+            # randomly_masked_image, random_mask_for_save = random_masking_for_some_fraction(img[0])
+            # random_mask_for_save = random_mask_for_save.permute(1,2,0).numpy()
+            # random_mask_for_save = np.dot(random_mask_for_save[...,:3], weights)
 
-            model_output = model(randomly_masked_image.unsqueeze(0))
+            random_mask_for_save = uncertain_randommasks[random_idx]
+            randomly_masked_image = img[0].cuda() * random_mask_for_save
 
-            chang_prob, chang_class = torch.max(model_output, dim=1)
-            chang_prob, chang_class = chang_prob[0].item(), chang_class[0].item()
+            #model_output = model(randomly_masked_image.unsqueeze(0))
+
+            # chang_prob, chang_class = torch.max(model_output, dim=1)
+            # chang_prob, chang_class = chang_prob[0].item(), chang_class[0].item()
 
             #if original_class != chang_class:
-            saliency_maps = explainer(randomly_masked_image.unsqueeze(0).cuda()).cpu().numpy()
+            #saliency_maps = explainer(randomly_masked_image.unsqueeze(0).cuda()).cpu().numpy()
+            saliency_maps = explainer(randomly_masked_image.unsqueeze(0).cuda())
             p, c = torch.topk(model(img.cuda()), k=1)
             p, c = p[0], c[0]
             saliency_maps = saliency_maps[c[0]]
 
             saliency_maps = random_mask_for_save * saliency_maps
+            saliency_maps = saliency_maps.permute(1,2,0).cpu().numpy()
             explainability_list.append(saliency_maps)
 
             # probabilities = torch.nn.functional.softmax(model_output, dim=1)
@@ -329,28 +360,29 @@ def process_batch(data_loader, model, explainer, explanations, batch_number, sta
         tensor_imshow(img[0])
         plt.imshow(variance, cmap='jet', alpha=0.5)
         plt.title('acc {:.2f}, iou {:.2f}, snr {:.2f}, log {:.2f}'.format(100*original_prob, iou_score, snr_value, log_likelihood_value))
-        plt.savefig(output_dir+"/variance_{:04d}.png".format(i+14050))
+        plt.savefig(output_dir+"/20variance_{:04d}.png".format(i+17))
         plt.close()
 
         tensor_imshow(img[0])
         plt.imshow(explanations[i], cmap='jet', alpha=0.5)
         plt.title('{:.2f}% , original {} -> {}'.format(100*original_prob, get_class_name(find_class_row(data_loader.dataset.classes[data_classes])), get_class_name(original_class)))
-        plt.savefig(output_dir+"/originalexplainability_{:04d}.png".format(i+14050))
+        plt.savefig(output_dir+"/20originalexplainability_{:04d}.png".format(i+17))
         plt.close()
 
         # if class is same
         if(find_class_row(data_loader.dataset.classes[data_classes]) == original_class):
-            list_result_true.append([original_prob*100, iou_score, snr_value, log_likelihood_value])
+            list_result_true.append([i+17, original_prob*100, iou_score, snr_value, log_likelihood_value])
 
         else:
-            list_result_false.append([original_prob*100, iou_score, snr_value, log_likelihood_value])
+            list_result_false.append([i+17, original_prob*100, iou_score, snr_value, log_likelihood_value])
             
         np.save(mask_dir+'/uncertain_{:05}.npy'.format(i), variance)
         print("{} th for loop processed..".format(i))
     
     # 배치 결과를 CSV 파일로 저장합니다.
-    batch_results_true = pd.concat(list_result_true)
-    batch_results_false = pd.concat(list_result_false)
+    batch_results_true = pd.concat([batch_results_true, pd.Series(list_result_true)])
+    batch_results_false = pd.concat([batch_results_false, pd.Series(list_result_false)])
+
     batch_results_true.to_csv(f'{csv_output_dir}/true_{batch_number}.csv', index=False)
     batch_results_false.to_csv(f'{csv_output_dir}/false_{batch_number}.csv', index=False)
     print(f"Batch {batch_number} saved.")
@@ -367,7 +399,7 @@ args.workers = 0
 args.datadir = image_dir[0]
 args.range = image_dir[1]
 
-batch_size = 100
+batch_size = 1
 total_images = len(args.range)
 # Size of imput images.
 args.input_size = (224, 224)
@@ -398,16 +430,19 @@ for p in model.parameters():
     
 # To use multiple GPUs
 model = nn.DataParallel(model)
-
 ## create explainer instance
 explainer = RISE(model, args.input_size, args.gpu_batch)
+uncertain = RISE(model, args.input_size, args.gpu_batch)
 # Generate masks for RISE or use the saved ones.
 maskspath = 'masks.npy'
+uncertain_maskpath = '/home/sophia/nn-uncertainty/mask_generator/masks/uncertainmask.npy'
 
-if 1:#not os.path.isfile(maskspath):
+if not os.path.isfile(maskspath):
     explainer.generate_masks(N=6000, s=8, p1=0.1, savepath=maskspath)
+    uncertain.generate_masks(N=6000, s=8, p1=0.1, savepath=uncertain_maskpath)
 else:
     explainer.load_masks(maskspath)
+    uncertain.load_masks(uncertain_maskpath)
     print('Masks are loaded.')
 
 if (EXPLAIN_FOR_THE_FIRST_TIME == 1):
@@ -416,6 +451,27 @@ if (EXPLAIN_FOR_THE_FIRST_TIME == 1):
 else:
     explanations_filename = explanation_dir+'/exp_{:05}-{:05}.npy'.format(args.range[0], args.range[-1])
     explanations = np.load(explanations_filename, allow_pickle=True)
+
+# uncertainty_list = np.empty((len(uncertain_randommasks), *args.input_size))
+# for i, (img, _) in enumerate(tqdm(uncertain_randommasks, total=len(uncertain_randommasks), desc='Uncertainty of Explaination')):
+#     saliency_maps = uncertain(img.cuda())
+#     uncertainty_list[i] = saliency
+    
+#     saliency_maps = explainer(img.cuda())
+#     explanations[i] = saliency_maps[target[i]].cpu().numpy()
+
+
+# saliency_maps = explainer(randomly_masked_image.unsqueeze(0).cuda()).cpu().numpy()
+# p, c = torch.topk(model(img.cuda()), k=1)
+# p, c = p[0], c[0]
+# saliency_maps = saliency_maps[c[0]]
+
+# saliency_maps = random_mask_for_save * saliency_maps
+# explainability_list.append(saliency_maps)
+
+
+# self.N = self.masks.shape[0]
+# uncertainty = explain_all()
 
 # 전체 이미지를 배치 단위로 처리합니다.
 for batch_num in range(0, total_images // batch_size):
