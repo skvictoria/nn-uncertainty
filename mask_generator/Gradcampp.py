@@ -29,11 +29,11 @@ EXPLAIN_FOR_THE_FIRST_TIME = 1
 os.environ["CUDA_VISIBLE_DEVICES"]="0"
 ## TODO: model change
 ## image dir
-image_dir = ['/home/seulgi/Downloads/imagenetVal', range(0, 500)]
-explanation_dir = '/home/seulgi/work/nn-uncertainty/mask_generator/explainers'
-mask_dir = '/home/seulgi/work/nn-uncertainty/mask_generator/gradcamppmasks'
-output_dir = '/home/seulgi/work/nn-uncertainty/evaluation/gradcampp-result' # for visualization
-csv_output_dir = '/home/seulgi/work/nn-uncertainty/evaluation/gradcampp-csv'
+image_dir = ['/home/seulgi/work/data/random-sampled-imagenet', range(0, 500)]
+explanation_dir = '/home/seulgi/work/data/explainers'
+mask_dir = '/home/seulgi/work/data/gradcamppmasks'
+output_dir = '/home/seulgi/work/data/gradcampp-result' # for visualization
+csv_output_dir = '/home/seulgi/work/data/gradcampp-csv'
 #image_dir = '/home/seulgi/imagenet-o'
 #args.range = range(0, 1000)
 #args.range = range(1500,2000)
@@ -390,10 +390,10 @@ def process_batch(data_loader, model, explainer, explanations, batch_number, sta
 
         # if class is same
         if(find_class_row(data_loader.dataset.classes[data_classes]) == original_class):
-            list_result_true.append([i+17, original_prob*100, iou_score, snr_value, log_likelihood_value])
+            list_result_true.append([i, original_prob*100, iou_score, snr_value, log_likelihood_value])
 
         else:
-            list_result_false.append([i+17, original_prob*100, iou_score, snr_value, log_likelihood_value])
+            list_result_false.append([i, original_prob*100, iou_score, snr_value, log_likelihood_value])
             
         np.save(mask_dir+'/uncertain_{:05}.npy'.format(i), variance)
         print("{} th for loop processed..".format(i))
@@ -456,7 +456,7 @@ uncertain = RISE(model, args.input_size, args.gpu_batch)
 targets=[ClassifierOutputTarget(295)]
 # Generate masks for RISE or use the saved ones.
 maskspath = 'masks.npy'
-uncertain_maskpath = '/home/seulgi/work/nn-uncertainty/mask_generator/gradcamppmasks/uncertainmask.npy'
+uncertain_maskpath = '/home/seulgi/work/data/gradcamppmasks/uncertainmask.npy'
 
 if not os.path.isfile(uncertain_maskpath):
     #explainer.generate_masks(N=6000, s=8, p1=0.1, savepath=maskspath)
@@ -494,6 +494,125 @@ else:
 # self.N = self.masks.shape[0]
 # uncertainty = explain_all()
 
-# 전체 이미지를 배치 단위로 처리합니다.
-for batch_num in range(0, total_images // batch_size):
-    process_batch(data_loader, model, explainer, explanations, batch_num, batch_num * batch_size)
+# # 전체 이미지를 배치 단위로 처리합니다.
+# for batch_num in range(0, total_images // batch_size):
+#     process_batch(data_loader, model, explainer, explanations, batch_num, batch_num * batch_size)
+batch_results_true = pd.DataFrame(columns=['Accuracy', 'IOU', 'SNR', 'LogLikelihood'])
+batch_results_false = pd.DataFrame(columns=['Accuracy', 'IOU', 'SNR', 'LogLikelihood'])
+
+uncertain_randommasks = np.load(uncertain_maskpath)
+uncertain_randommasks = torch.from_numpy(uncertain_randommasks).float().cuda()
+
+list_result_true = []
+list_result_false = []
+for i, (img, data_classes) in enumerate(data_loader):
+    data_classes = data_classes[0].item()
+    model_output = model(img.cuda())
+    original_prob = torch.nn.functional.softmax(model_output, dim=1)
+    original_prob, original_class = torch.max(original_prob, dim=1)
+    original_prob, original_class = original_prob[0].item(), original_class[0].item()
+    
+    # # it means that network is not confident.
+    # if(find_class_row(data_loader.dataset.classes[data_classes]) == original_class):
+    #     continue
+
+    # ### image save
+    # min_val = img[0].min()
+    # range_val = img[0].max() - min_val
+    # image_tensor = (img[0] - min_val) / range_val
+    # image_matrix = (image_tensor*255).type(torch.uint8)
+    # image_matrix = image_matrix.permute(1,2,0)
+    # image_matrix = Image.fromarray(image_matrix.numpy())
+    # image_matrix.save('/home/sophia/voice/images/{}.png'.format(i))
+
+    explainability_list = []
+    for random_idx in range(200):
+        # Random_mask_for_save: grayscale version of mask
+        # randomly_masked_image, random_mask_for_save = random_masking_for_some_fraction(img[0])
+        # random_mask_for_save = random_mask_for_save.permute(1,2,0).numpy()
+        # random_mask_for_save = np.dot(random_mask_for_save[...,:3], weights)
+
+        random_mask_for_save = uncertain_randommasks[random_idx]
+        randomly_masked_image = img[0].cuda() * random_mask_for_save
+
+        #model_output = model(randomly_masked_image.unsqueeze(0))
+
+        # chang_prob, chang_class = torch.max(model_output, dim=1)
+        # chang_prob, chang_class = chang_prob[0].item(), chang_class[0].item()
+
+        #if original_class != chang_class:
+        #saliency_maps = explainer(randomly_masked_image.unsqueeze(0).cuda()).cpu().numpy()
+        saliency_maps = explainer(randomly_masked_image.unsqueeze(0).cuda(), targets=targets)
+        # p, c = torch.topk(model(img.cuda()), k=1)
+        # p, c = p[0], c[0]
+        # saliency_maps = saliency_maps[c[0]]
+        saliency_maps = saliency_maps[0]
+        random_mask_for_save = random_mask_for_save[0].cpu()
+        saliency_maps = random_mask_for_save * saliency_maps
+        #saliency_maps = saliency_maps.permute(1,2,0).cpu().numpy()
+        explainability_list.append(saliency_maps)
+
+        # probabilities = torch.nn.functional.softmax(model_output, dim=1)
+        # entropy = -(probabilities * probabilities.log()).sum(1)
+        # entropy = entropy.item()
+
+    if len(explainability_list)==0:
+        continue
+    pixel_values = np.stack(explainability_list, axis=0)
+    
+
+    ## simply adding
+    #ones_count = np.sum(pixel_values, axis=0)
+    #ones_count = np.sum(pixel_values_for_RISE, axis=0)
+
+    # ## variance
+    variance = np.var(pixel_values, axis=0)
+
+    
+    ############ image save for simply adding
+    # tensor_imshow(img[0])
+    # plt.imshow(ones_count, cmap='jet', alpha=0.5)
+    # plt.savefig("result-target-diff/modelagnostic_add_{:04d}.png".format(i+14050))
+    # plt.close()
+    
+    iou_score = calculate_iou(explanations[i], variance)
+
+    snr_value = calculate_snr(variance)
+
+    log_likelihood_value = calculate_log_likelihood(explanations[i], variance)
+    
+
+    ############# image save for variance
+    tensor_imshow(img[0])
+    
+    plt.imshow(variance, cmap='jet', alpha=0.5)
+    
+    plt.title('acc {:.2f}, iou {:.2f}, snr {:.2f}, log {:.2f}'.format(100*original_prob, iou_score, snr_value, log_likelihood_value))
+    
+    plt.savefig(output_dir+"/variance_{:04d}.png".format(i))
+    
+    plt.close()
+    
+    tensor_imshow(img[0])
+    plt.imshow(explanations[i], cmap='jet', alpha=0.5)
+    plt.title('{:.2f}% , original {} -> {}'.format(100*original_prob, get_class_name(find_class_row(data_loader.dataset.classes[data_classes])), get_class_name(original_class)))
+    plt.savefig(output_dir+"/originalexplainability_{:04d}.png".format(i))
+    plt.close()
+
+    # if class is same
+    if(find_class_row(data_loader.dataset.classes[data_classes]) == original_class):
+        list_result_true.append([i, original_prob*100, iou_score, snr_value, log_likelihood_value])
+
+    else:
+        list_result_false.append([i, original_prob*100, iou_score, snr_value, log_likelihood_value])
+        
+    np.save(mask_dir+'/uncertain_{:05}.npy'.format(i), variance)
+    print("{} th for loop processed..".format(i))
+
+# 배치 결과를 CSV 파일로 저장합니다.
+batch_results_true = pd.concat([batch_results_true, pd.Series(list_result_true)])
+batch_results_false = pd.concat([batch_results_false, pd.Series(list_result_false)])
+
+batch_results_true.to_csv(f'{csv_output_dir}/true.csv', index=False)
+batch_results_false.to_csv(f'{csv_output_dir}/false.csv', index=False)
+print(f"file saved.")
