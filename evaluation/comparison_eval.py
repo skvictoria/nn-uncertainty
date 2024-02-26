@@ -12,6 +12,7 @@ import torchvision.transforms as transforms
 import torchvision.datasets as datasets
 import torchvision.models as models
 from torchvision.utils import save_image
+import torch.nn.functional as F
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.dirname(current_dir)
@@ -62,23 +63,16 @@ def calculate_snr(um):
     mu = np.mean(um)
     sigma = np.std(um)
     snr = mu / sigma
+
+    a = np.asanyarray(a)
+    m = a.mean(axis=None)
+    sd = a.std(axis=None, ddof=0)
+    print(snr)
+    print(np.where(sd == 0, 0, m/sd))
     return snr
 
-# def calculate_log_likelihood(image1, image2):
-#     # normalize images
-#     image1_normalized = normalize_image(image1)
-#     image2_normalized = normalize_image(image2)
-
-#     image1_normalized = np.where(image1_normalized > np.mean(image1_normalized), 1, 0)
-#     image2_normalized = np.where(image2_normalized > np.mean(image2_normalized), 1, 0)
-
-
-#     epsilon = 1e-12
-#     log_likelihood = np.sum(image1_normalized * np.log(image2_normalized + epsilon) + 
-#                             (1 - image1_normalized) * np.log(1 - image2_normalized + epsilon))
-#     return log_likelihood
-
 def calculate_log_likelihood(image1, image2):
+    log_likelihood = F.nll_loss()
     # 이미지 정규화
     image1_normalized = normalize_image(image1)
     image2_normalized = normalize_image(image2)
@@ -89,21 +83,28 @@ def calculate_log_likelihood(image1, image2):
     
     return log_likelihood
 
-def find_class_row(class_name, filename='/home/sophia/nn-uncertainty/synset_words.txt'):
+def find_class_row(class_name, filename='/home/seulgi/work/nn-uncertainty/synset_words.txt'):
     with open(filename, 'r') as file:
         for i, line in enumerate(file):
             if class_name in line:
                 return i
     return -1
 
-os.environ["CUDA_VISIBLE_DEVICES"]="1"
 
-dataset = datasets.ImageFolder('/data/datasets/ImageNet/val/', preprocess)
+### TODO : change these paths
+os.environ["CUDA_VISIBLE_DEVICES"]="1"
+image_dir = ['/home/seulgi/work/data/random-sampled-imagenet', range(0, 500)]
+explanation_dir = '/home/seulgi/work/data/explainers/gradcam-exp_00000-00499.npy'
+mask_dir = '/home/seulgi/work/data/gradcammasks'
+output_dir = '/home/seulgi/work/data/gradcam-result' # for visualization
+csv_output_dir = '/home/seulgi/work/data/gradcam-csv'
+
+dataset = datasets.ImageFolder(image_dir[0], preprocess)
 
 # This example only works with batch size 1. For larger batches see RISEBatch in explanations.py.
 data_loader = torch.utils.data.DataLoader(
     dataset, batch_size=1, shuffle=False,
-    num_workers=8, pin_memory=True, sampler=RangeSampler(range(14000, 15000)))
+    num_workers=8, pin_memory=True, sampler=RangeSampler(image_dir[1]))
 
 ## Load models
 model = models.resnet50(True)
@@ -114,14 +115,15 @@ model = model.cuda()
 for p in model.parameters():
     p.requires_grad = False
 model = nn.DataParallel(model)
-explainer = RISE(model, (224, 224), 250)
-explainer.load_masks('/home/sophia/nn-uncertainty/evaluation/masks.npy')
-explanations = np.load('/home/sophia/nn-uncertainty/evaluation/exp_14000-14999.npy', allow_pickle=True)
 
+# Load explanation
+explanations = np.load(explanation_dir, allow_pickle=True)
+
+# Load uncertainty masks
 directory = '/home/sophia/nn-uncertainty'
 files = [file for file in os.listdir(directory) if file.startswith('uncertain_')]
-
 sorted_files = sorted(files)
+
 
 list_result_false = []
 list_result_true = []
