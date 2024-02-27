@@ -1,33 +1,20 @@
 import os
 import numpy as np
-from matplotlib import pyplot as plt
-from tqdm import tqdm
 import sys
 
 import torch
 import torch.nn as nn
-import torch.backends.cudnn as cudnn
 import torch.utils.data
-import torchvision.transforms as transforms
 import torchvision.datasets as datasets
 import torchvision.models as models
-from torchvision.utils import save_image
 import torch.nn.functional as F
+import pandas as pd
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.dirname(current_dir)
 if parent_dir not in sys.path:
     sys.path.append(parent_dir)
-
-from pytorch_grad_cam import GradCAM, HiResCAM, ScoreCAM, GradCAMPlusPlus, AblationCAM, XGradCAM, EigenCAM, FullGrad
-from pytorch_grad_cam.utils.model_targets import ClassifierOutputTarget
-from pytorch_grad_cam.utils.image import show_cam_on_image
-
 from utils import *
-from RISE import RISE
-
-from PIL import Image
-import pandas as pd
 
 def normalize_image(image):
     # 이미지의 최소값과 최대값을 구함
@@ -63,25 +50,7 @@ def calculate_snr(um):
     mu = np.mean(um)
     sigma = np.std(um)
     snr = mu / sigma
-
-    a = np.asanyarray(a)
-    m = a.mean(axis=None)
-    sd = a.std(axis=None, ddof=0)
-    print(snr)
-    print(np.where(sd == 0, 0, m/sd))
     return snr
-
-def calculate_log_likelihood(image1, image2):
-    log_likelihood = F.nll_loss()
-    # 이미지 정규화
-    image1_normalized = normalize_image(image1)
-    image2_normalized = normalize_image(image2)
-    
-    # 이미지의 픽셀 값 차이를 기반으로 로그 가능도 계산
-    epsilon = 1e-12
-    log_likelihood = -np.sum((image1_normalized - image2_normalized) ** 2)# / (2 * epsilon ** 2)
-    
-    return log_likelihood
 
 def find_class_row(class_name, filename='/home/seulgi/work/nn-uncertainty/synset_words.txt'):
     with open(filename, 'r') as file:
@@ -94,10 +63,10 @@ def find_class_row(class_name, filename='/home/seulgi/work/nn-uncertainty/synset
 ### TODO : change these paths
 os.environ["CUDA_VISIBLE_DEVICES"]="1"
 image_dir = ['/home/seulgi/work/data/random-sampled-imagenet', range(0, 500)]
-explanation_dir = '/home/seulgi/work/data/explainers/gradcam-exp_00000-00499.npy'
-mask_dir = '/home/seulgi/work/data/gradcammasks'
-output_dir = '/home/seulgi/work/data/gradcam-result' # for visualization
-csv_output_dir = '/home/seulgi/work/data/gradcam-csv'
+model_name = 'scorecam'
+explanation_dir = '/home/seulgi/work/data/explainers/{}-exp_00000-00499.npy'.format(model_name)
+mask_dir = '/home/seulgi/work/data/{}masks'.format(model_name)
+save_csv_file_path = '/home/seulgi/work/nn-uncertainty/evaluation/csv'
 
 dataset = datasets.ImageFolder(image_dir[0], preprocess)
 
@@ -120,45 +89,108 @@ model = nn.DataParallel(model)
 explanations = np.load(explanation_dir, allow_pickle=True)
 
 # Load uncertainty masks
-directory = '/home/sophia/nn-uncertainty'
-files = [file for file in os.listdir(directory) if file.startswith('uncertain_')]
-sorted_files = sorted(files)
+uncertain_files = [file for file in os.listdir(mask_dir) if file.startswith('uncertain_')]
+diff_files = [file for file in os.listdir(mask_dir) if file.startswith('diff_')]
+same_files = [file for file in os.listdir(mask_dir) if file.startswith('same_')]
+uncertain_files = sorted(uncertain_files)
+diff_files = sorted(diff_files)
+same_files = sorted(same_files)
+
+list_result_false = []
+list_result_true = []
+batch_results_true = pd.DataFrame(columns=['ith', 'Accuracy', 'IOU', 'SNR', 'LogLikelihood'])
+batch_results_false = pd.DataFrame(columns=['ith', 'Accuracy', 'IOU', 'SNR', 'LogLikelihood'])
+
+## whole uncertainty
+i = 0
+for single_npy, (img, data_classes) in zip(uncertain_files, data_loader):
+    logit = model(img.cuda())
+    original_prob_cuda, original_class = torch.max(logit, dim=1)
+    original_prob, original_class = original_prob_cuda[0].item(), original_class[0].item()
+    npy_uncertainty = np.load(os.path.join(mask_dir, single_npy), allow_pickle=True)
+    
+    iou_score = calculate_iou(explanations[i], npy_uncertainty)
+    snr_value = calculate_snr(npy_uncertainty)
+    target = torch.from_numpy(np.asarray([find_class_row(data_loader.dataset.classes[data_classes])])).cuda()
+    
+    log_likelihood_value = -F.nll_loss(logit, target).data.cpu().numpy()
+    if(find_class_row(data_loader.dataset.classes[data_classes]) == original_class):
+        #list_result_true.append([i, original_prob*100, iou_score, snr_value, log_likelihood_value])
+        new_row_true = pd.DataFrame([{'ith': i, 'Accuracy': original_prob*100, 'IOU': iou_score, 'SNR': snr_value, 'LogLikelihood': log_likelihood_value}])
+        batch_results_true = pd.concat([batch_results_true, new_row_true], ignore_index=True)
+
+    else:
+        #list_result_false.append([i, original_prob*100, iou_score, snr_value, log_likelihood_value])
+        new_row_false = pd.DataFrame([{'ith': i, 'Accuracy': original_prob*100, 'IOU': iou_score, 'SNR': snr_value, 'LogLikelihood': log_likelihood_value}])
+        batch_results_false = pd.concat([batch_results_false, new_row_false], ignore_index=True)
+
+    i+=1
+batch_results_true.to_csv(save_csv_file_path+'/'+ model_name+'_true.csv', index=False)
+batch_results_false.to_csv(save_csv_file_path+'/'+ model_name+'_false.csv', index=False)
+
 
 
 list_result_false = []
 list_result_true = []
 batch_results_true = pd.DataFrame(columns=['ith', 'Accuracy', 'IOU', 'SNR', 'LogLikelihood'])
 batch_results_false = pd.DataFrame(columns=['ith', 'Accuracy', 'IOU', 'SNR', 'LogLikelihood'])
+
+## whole uncertainty
 i = 0
-for single_npy, (img, data_classes) in zip(sorted_files, data_loader):
-    original_prob, original_class = torch.max(model(img.cuda()), dim=1)
-    original_prob, original_class = original_prob[0].item(), original_class[0].item()
-    npy_uncertainty = np.load(os.path.join(directory, single_npy), allow_pickle=True)
-    
+for single_npy, (img, data_classes) in zip(diff_files, data_loader):
+    logit = model(img.cuda())
+    original_prob_cuda, original_class = torch.max(logit, dim=1)
+    original_prob, original_class = original_prob_cuda[0].item(), original_class[0].item()
+    npy_uncertainty = np.load(os.path.join(mask_dir, single_npy), allow_pickle=True)
     
     iou_score = calculate_iou(explanations[i], npy_uncertainty)
     snr_value = calculate_snr(npy_uncertainty)
-    log_likelihood_value = calculate_log_likelihood(explanations[i], npy_uncertainty)
-
+    target = torch.from_numpy(np.asarray([find_class_row(data_loader.dataset.classes[data_classes])])).cuda()
+    
+    log_likelihood_value = -F.nll_loss(logit, target).data.cpu().numpy()
     if(find_class_row(data_loader.dataset.classes[data_classes]) == original_class):
-        list_result_true.append([i, original_prob*100, iou_score, snr_value, log_likelihood_value])
+        #list_result_true.append([i, original_prob*100, iou_score, snr_value, log_likelihood_value])
+        new_row_true = pd.DataFrame([{'ith': i, 'Accuracy': original_prob*100, 'IOU': iou_score, 'SNR': snr_value, 'LogLikelihood': log_likelihood_value}])
+        batch_results_true = pd.concat([batch_results_true, new_row_true], ignore_index=True)
 
     else:
-        list_result_false.append([i, original_prob*100, iou_score, snr_value, log_likelihood_value])
+        #list_result_false.append([i, original_prob*100, iou_score, snr_value, log_likelihood_value])
+        new_row_false = pd.DataFrame([{'ith': i, 'Accuracy': original_prob*100, 'IOU': iou_score, 'SNR': snr_value, 'LogLikelihood': log_likelihood_value}])
+        batch_results_false = pd.concat([batch_results_false, new_row_false], ignore_index=True)
 
-    tensor_imshow(img[0])
-    plt.imshow(npy_uncertainty, cmap='jet', alpha=0.5)
-    plt.title('acc {:.2f}, iou {:.2f}, snr {:.2f}, log {:.2f}'.format(100*original_prob, iou_score, snr_value, log_likelihood_value))
-    plt.savefig("/home/sophia/nn-uncertainty/quantitative/modelagnostic_variance_{:04d}.png".format(i+14050))
-    plt.close()
-
-    tensor_imshow(img[0])
-    plt.imshow(explanations[i], cmap='jet', alpha=0.5)
-    plt.title('{:.2f}% , original {} -> {}'.format(100*original_prob, get_class_name(find_class_row(data_loader.dataset.classes[data_classes])), get_class_name(original_class)))
-    plt.savefig("/home/sophia/nn-uncertainty/quantitative/modelagnostic_originalexplainability_{:04d}.png".format(i+14050))
-    plt.close()
     i+=1
-batch_results_true = pd.concat([batch_results_true, pd.Series(list_result_true)])
-batch_results_false = pd.concat([batch_results_false, pd.Series(list_result_false)])
-batch_results_true.to_csv(f'/home/sophia/nn-uncertainty/evaluation/metrics_results_batch_true.csv', index=False)
-batch_results_false.to_csv(f'/home/sophia/nn-uncertainty/evaluation/metrics_results_batch_false.csv', index=False)
+batch_results_true.to_csv(save_csv_file_path+'/'+ model_name+'_true_diff.csv', index=False)
+batch_results_false.to_csv(save_csv_file_path+'/'+ model_name+'_false_diff.csv', index=False)
+
+
+list_result_false = []
+list_result_true = []
+batch_results_true = pd.DataFrame(columns=['ith', 'Accuracy', 'IOU', 'SNR', 'LogLikelihood'])
+batch_results_false = pd.DataFrame(columns=['ith', 'Accuracy', 'IOU', 'SNR', 'LogLikelihood'])
+
+## whole uncertainty
+i = 0
+for single_npy, (img, data_classes) in zip(same_files, data_loader):
+    logit = model(img.cuda())
+    original_prob_cuda, original_class = torch.max(logit, dim=1)
+    original_prob, original_class = original_prob_cuda[0].item(), original_class[0].item()
+    npy_uncertainty = np.load(os.path.join(mask_dir, single_npy), allow_pickle=True)
+    
+    iou_score = calculate_iou(explanations[i], npy_uncertainty)
+    snr_value = calculate_snr(npy_uncertainty)
+    target = torch.from_numpy(np.asarray([find_class_row(data_loader.dataset.classes[data_classes])])).cuda()
+    
+    log_likelihood_value = -F.nll_loss(logit, target).data.cpu().numpy()
+    if(find_class_row(data_loader.dataset.classes[data_classes]) == original_class):
+        #list_result_true.append([i, original_prob*100, iou_score, snr_value, log_likelihood_value])
+        new_row_true = pd.DataFrame([{'ith': i, 'Accuracy': original_prob*100, 'IOU': iou_score, 'SNR': snr_value, 'LogLikelihood': log_likelihood_value}])
+        batch_results_true = pd.concat([batch_results_true, new_row_true], ignore_index=True)
+
+    else:
+        #list_result_false.append([i, original_prob*100, iou_score, snr_value, log_likelihood_value])
+        new_row_false = pd.DataFrame([{'ith': i, 'Accuracy': original_prob*100, 'IOU': iou_score, 'SNR': snr_value, 'LogLikelihood': log_likelihood_value}])
+        batch_results_false = pd.concat([batch_results_false, new_row_false], ignore_index=True)
+
+    i+=1
+batch_results_true.to_csv(save_csv_file_path+'/'+ model_name+'_true_same.csv', index=False)
+batch_results_false.to_csv(save_csv_file_path+'/'+ model_name+'_false_same.csv', index=False)
